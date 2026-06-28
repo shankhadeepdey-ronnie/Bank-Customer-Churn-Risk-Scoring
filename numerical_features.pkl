@@ -1,0 +1,26 @@
+# Project Summary
+
+Project: Predictive Modeling and Risk Scoring for Bank Customer Churn
+
+Final Model: Calibrated Tuned Gradient Boosting
+
+Final Calibrated Test Results:
+- Accuracy: 0.8400
+- Precision: 0.5960
+- Recall: 0.6634
+- F1 Score: 0.6279
+- ROC-AUC: 0.8667
+- PR-AUC: 0.7095
+
+Top Churn Drivers:
+1. Age
+2. Number of Products
+3. Engagement-Product Interaction
+4. Active Membership
+5. Geography Germany
+6. Balance
+7. Age-Tenure Interaction
+8. Balance-to-Salary Ratio
+
+Business Value:
+The project helps banks identify likely churners early and take targeted retention actions.
