@@ -1,6 +1,6 @@
 # ============================================================
 # BANK CUSTOMER CHURN RISK SCORING DASHBOARD
-# Streamlit App
+# Streamlit App with Live Training Fallback
 # ============================================================
 
 import os
@@ -10,6 +10,11 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import GradientBoostingClassifier
 
 
 # ============================================================
@@ -34,17 +39,14 @@ st.markdown(
     .main {
         background-color: #f7f9fc;
     }
-
     .big-title {
         font-size: 40px;
         font-weight: 800;
     }
-
     .subtitle {
         color: #4a5568;
         font-size: 18px;
     }
-
     .info-card {
         background-color: white;
         padding: 20px;
@@ -58,62 +60,7 @@ st.markdown(
 
 
 # ============================================================
-# LOAD MODEL
-# ============================================================
-
-@st.cache_resource
-def load_model():
-    possible_model_paths = [
-        "models/best_churn_model_calibrated.pkl",
-        "best_churn_model_calibrated.pkl",
-        "models/Tuned_Gradient_Boosting_best_model.pkl",
-        "Tuned_Gradient_Boosting_best_model.pkl",
-        "models/best_churn_model_uncalibrated.pkl",
-        "best_churn_model_uncalibrated.pkl"
-    ]
-
-    possible_threshold_paths = [
-        "models/calibrated_best_threshold.pkl",
-        "calibrated_best_threshold.pkl",
-        "models/best_threshold.pkl",
-        "best_threshold.pkl"
-    ]
-
-    model_path = None
-    threshold_path = None
-
-    for path in possible_model_paths:
-        if os.path.exists(path):
-            model_path = path
-            break
-
-    for path in possible_threshold_paths:
-        if os.path.exists(path):
-            threshold_path = path
-            break
-
-    if model_path is None:
-        st.error(
-            "Model file not found. Please upload one of these files: "
-            "`best_churn_model_calibrated.pkl`, "
-            "`Tuned_Gradient_Boosting_best_model.pkl`, or "
-            "`best_churn_model_uncalibrated.pkl`."
-        )
-        st.stop()
-
-    model = joblib.load(model_path)
-
-    if threshold_path is not None:
-        threshold = joblib.load(threshold_path)
-        threshold = float(threshold)
-    else:
-        threshold = 0.33
-
-    return model, threshold, model_path
-
-
-# ============================================================
-# LOAD DATASET
+# DATASET LOADING
 # ============================================================
 
 @st.cache_data
@@ -130,13 +77,188 @@ def load_dataset():
 
     for path in possible_paths:
         if os.path.exists(path):
-            return pd.read_csv(path)
+            return pd.read_csv(path), path
 
-    return None
+    return None, None
 
 
 # ============================================================
-# LOAD MODEL COMPARISON
+# FEATURE ENGINEERING
+# ============================================================
+
+def engineer_features(input_df):
+    df = input_df.copy()
+
+    required_cols = [
+        "CreditScore", "Geography", "Gender", "Age", "Tenure",
+        "Balance", "NumOfProducts", "HasCrCard",
+        "IsActiveMember", "EstimatedSalary"
+    ]
+
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = 0
+
+    salary_safe = df["EstimatedSalary"].replace(0, np.nan)
+
+    df["Balance_to_Salary"] = df["Balance"] / salary_safe
+    df["Balance_to_Salary"] = (
+        df["Balance_to_Salary"]
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0)
+    )
+
+    df["Product_Density"] = df["NumOfProducts"] / (df["Tenure"] + 1)
+    df["Engagement_Product"] = df["IsActiveMember"] * df["NumOfProducts"]
+    df["Age_Tenure"] = df["Age"] * df["Tenure"]
+
+    df["High_Balance_Flag"] = np.where(df["Balance"] > 97198.54, 1, 0)
+    df["Zero_Balance_Flag"] = np.where(df["Balance"] == 0, 1, 0)
+    df["Senior_Customer_Flag"] = np.where(df["Age"] >= 60, 1, 0)
+    df["Low_CreditScore_Flag"] = np.where(df["CreditScore"] < 652, 1, 0)
+
+    return df
+
+
+# ============================================================
+# LIVE MODEL TRAINING FALLBACK
+# ============================================================
+
+@st.cache_resource
+def train_live_gradient_boosting_model():
+    """
+    Trains a tuned Gradient Boosting model live from the dataset.
+    This avoids pickle/joblib version mismatch problems on Streamlit Cloud.
+    """
+
+    df_train, data_path = load_dataset()
+
+    if df_train is None:
+        st.error("Dataset not found. Please upload `European_Bank.csv` inside the dataset folder.")
+        st.stop()
+
+    drop_cols = []
+
+    for col in ["CustomerId", "Surname"]:
+        if col in df_train.columns:
+            drop_cols.append(col)
+
+    if "Year" in df_train.columns and df_train["Year"].nunique() == 1:
+        drop_cols.append("Year")
+
+    df_train = df_train.drop(columns=drop_cols, errors="ignore")
+
+    if "Exited" not in df_train.columns:
+        st.error("Target column `Exited` not found in dataset.")
+        st.stop()
+
+    X = df_train.drop(columns=["Exited"])
+    y = df_train["Exited"]
+
+    X = engineer_features(X)
+
+    categorical_features = X.select_dtypes(include=["object"]).columns.tolist()
+    numerical_features = X.select_dtypes(include=["int64", "float64", "int32", "float32"]).columns.tolist()
+
+    try:
+        onehot = OneHotEncoder(
+            drop="first",
+            handle_unknown="ignore",
+            sparse_output=False
+        )
+    except TypeError:
+        onehot = OneHotEncoder(
+            drop="first",
+            handle_unknown="ignore",
+            sparse=False
+        )
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("cat", onehot, categorical_features),
+            ("num", StandardScaler(), numerical_features)
+        ],
+        remainder="drop"
+    )
+
+    gb_model = GradientBoostingClassifier(
+        n_estimators=507,
+        learning_rate=0.014768002316749563,
+        max_depth=4,
+        min_samples_leaf=39,
+        min_samples_split=59,
+        subsample=0.969634193394765,
+        max_features="log2",
+        random_state=42
+    )
+
+    pipeline = Pipeline(
+        steps=[
+            ("preprocessor", preprocessor),
+            ("clf", gb_model)
+        ]
+    )
+
+    pipeline.fit(X, y)
+
+    return pipeline, data_path
+
+
+# ============================================================
+# MODEL LOADING
+# ============================================================
+
+@st.cache_resource
+def load_model():
+    """
+    Tries saved pickle model first.
+    If loading fails, trains model live from dataset.
+    """
+
+    possible_model_paths = [
+        "models/best_churn_model_calibrated.pkl",
+        "best_churn_model_calibrated.pkl",
+        "models/Tuned_Gradient_Boosting_best_model.pkl",
+        "Tuned_Gradient_Boosting_best_model.pkl",
+        "models/best_churn_model_uncalibrated.pkl",
+        "best_churn_model_uncalibrated.pkl"
+    ]
+
+    possible_threshold_paths = [
+        "models/calibrated_best_threshold.pkl",
+        "calibrated_best_threshold.pkl",
+        "models/best_threshold.pkl",
+        "best_threshold.pkl"
+    ]
+
+    threshold = 0.33
+    threshold_path = None
+
+    for path in possible_threshold_paths:
+        if os.path.exists(path):
+            threshold_path = path
+            break
+
+    if threshold_path is not None:
+        try:
+            threshold = float(joblib.load(threshold_path))
+        except Exception:
+            threshold = 0.33
+
+    for model_path in possible_model_paths:
+        if os.path.exists(model_path):
+            try:
+                model = joblib.load(model_path)
+                return model, threshold, model_path
+            except Exception:
+                pass
+
+    model, data_path = train_live_gradient_boosting_model()
+    return model, threshold, f"Live trained Gradient Boosting from {data_path}"
+
+
+# ============================================================
+# MODEL COMPARISON TABLE
 # ============================================================
 
 @st.cache_data
@@ -174,7 +296,7 @@ def load_model_comparison():
 
 
 # ============================================================
-# LOAD FEATURE IMPORTANCE
+# FEATURE IMPORTANCE TABLE
 # ============================================================
 
 @st.cache_data
@@ -234,34 +356,6 @@ def load_feature_importance():
             0.000859
         ]
     })
-
-
-# ============================================================
-# FEATURE ENGINEERING
-# ============================================================
-
-def engineer_features(input_df):
-    df = input_df.copy()
-
-    salary_safe = df["EstimatedSalary"].replace(0, np.nan)
-
-    df["Balance_to_Salary"] = df["Balance"] / salary_safe
-    df["Balance_to_Salary"] = (
-        df["Balance_to_Salary"]
-        .replace([np.inf, -np.inf], np.nan)
-        .fillna(0)
-    )
-
-    df["Product_Density"] = df["NumOfProducts"] / (df["Tenure"] + 1)
-    df["Engagement_Product"] = df["IsActiveMember"] * df["NumOfProducts"]
-    df["Age_Tenure"] = df["Age"] * df["Tenure"]
-
-    df["High_Balance_Flag"] = np.where(df["Balance"] > 97198.54, 1, 0)
-    df["Zero_Balance_Flag"] = np.where(df["Balance"] == 0, 1, 0)
-    df["Senior_Customer_Flag"] = np.where(df["Age"] >= 60, 1, 0)
-    df["Low_CreditScore_Flag"] = np.where(df["CreditScore"] < 652, 1, 0)
-
-    return df
 
 
 # ============================================================
@@ -360,11 +454,11 @@ def predict_customer(customer_df):
 
 
 # ============================================================
-# LOAD ALL FILES
+# LOAD FILES
 # ============================================================
 
 model, threshold, loaded_model_path = load_model()
-df = load_dataset()
+df, dataset_path = load_dataset()
 model_comparison_df = load_model_comparison()
 feature_importance_df = load_feature_importance()
 
@@ -397,6 +491,7 @@ st.sidebar.metric("Recall", "66.34%")
 
 with st.sidebar.expander("Loaded files"):
     st.write("Model:", loaded_model_path)
+    st.write("Dataset:", dataset_path)
 
 
 # ============================================================
@@ -841,7 +936,8 @@ elif page == "Model Performance":
     st.info(
         """
         Tuned Gradient Boosting achieved the best raw ROC-AUC.
-        The calibrated version was selected for deployment because risk scoring requires reliable probability outputs.
+        Due to pickle version mismatch on deployment, the dashboard safely trains
+        the tuned Gradient Boosting model live from the dataset.
         """
     )
 
@@ -924,7 +1020,7 @@ elif page == "About Project":
 
         ### Final Model
 
-        **Calibrated Tuned Gradient Boosting**
+        **Tuned Gradient Boosting**
 
         | Metric | Value |
         |---|---:|
