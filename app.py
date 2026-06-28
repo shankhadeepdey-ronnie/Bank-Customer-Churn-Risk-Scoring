@@ -13,38 +13,108 @@ import plotly.graph_objects as go
 
 
 # ============================================================
-# Page Config
+# PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
     page_title="Bank Churn Risk Scoring",
     page_icon="🏦",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 
 # ============================================================
-# Helper Functions
+# CUSTOM CSS
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+    .main {
+        background-color: #f7f9fc;
+    }
+
+    .big-title {
+        font-size: 40px;
+        font-weight: 800;
+    }
+
+    .subtitle {
+        color: #4a5568;
+        font-size: 18px;
+    }
+
+    .info-card {
+        background-color: white;
+        padding: 20px;
+        border-radius: 16px;
+        box-shadow: 0px 4px 15px rgba(0,0,0,0.06);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# LOAD MODEL
 # ============================================================
 
 @st.cache_resource
 def load_model():
-    model_path = "models/best_churn_model_calibrated.pkl"
-    threshold_path = "models/calibrated_best_threshold.pkl"
+    possible_model_paths = [
+        "models/best_churn_model_calibrated.pkl",
+        "best_churn_model_calibrated.pkl",
+        "models/Tuned_Gradient_Boosting_best_model.pkl",
+        "Tuned_Gradient_Boosting_best_model.pkl",
+        "models/best_churn_model_uncalibrated.pkl",
+        "best_churn_model_uncalibrated.pkl"
+    ]
 
-    if not os.path.exists(model_path):
-        st.error("Model file not found: models/best_churn_model_calibrated.pkl")
-        st.stop()
+    possible_threshold_paths = [
+        "models/calibrated_best_threshold.pkl",
+        "calibrated_best_threshold.pkl",
+        "models/best_threshold.pkl",
+        "best_threshold.pkl"
+    ]
 
-    if not os.path.exists(threshold_path):
-        st.error("Threshold file not found: models/calibrated_best_threshold.pkl")
+    model_path = None
+    threshold_path = None
+
+    for path in possible_model_paths:
+        if os.path.exists(path):
+            model_path = path
+            break
+
+    for path in possible_threshold_paths:
+        if os.path.exists(path):
+            threshold_path = path
+            break
+
+    if model_path is None:
+        st.error(
+            "Model file not found. Please upload one of these files: "
+            "`best_churn_model_calibrated.pkl`, "
+            "`Tuned_Gradient_Boosting_best_model.pkl`, or "
+            "`best_churn_model_uncalibrated.pkl`."
+        )
         st.stop()
 
     model = joblib.load(model_path)
-    threshold = joblib.load(threshold_path)
 
-    return model, float(threshold)
+    if threshold_path is not None:
+        threshold = joblib.load(threshold_path)
+        threshold = float(threshold)
+    else:
+        threshold = 0.33
 
+    return model, threshold, model_path
+
+
+# ============================================================
+# LOAD DATASET
+# ============================================================
 
 @st.cache_data
 def load_dataset():
@@ -52,7 +122,10 @@ def load_dataset():
         "dataset/European_Bank.csv",
         "European_Bank.csv",
         "dataset/European_Bank_Feature_Engineered.csv",
-        "outputs/European_Bank_Feature_Engineered.csv"
+        "outputs/European_Bank_Feature_Engineered.csv",
+        "European_Bank_Feature_Engineered.csv",
+        "dataset/European_Bank_Clean_Featured.csv",
+        "European_Bank_Clean_Featured.csv"
     ]
 
     for path in possible_paths:
@@ -62,12 +135,22 @@ def load_dataset():
     return None
 
 
+# ============================================================
+# LOAD MODEL COMPARISON
+# ============================================================
+
 @st.cache_data
 def load_model_comparison():
-    path = "outputs/final_test_model_comparison.csv"
+    possible_paths = [
+        "outputs/final_test_model_comparison.csv",
+        "final_test_model_comparison.csv",
+        "model_comparison_step7.csv",
+        "outputs/model_comparison_step7.csv"
+    ]
 
-    if os.path.exists(path):
-        return pd.read_csv(path)
+    for path in possible_paths:
+        if os.path.exists(path):
+            return pd.read_csv(path)
 
     return pd.DataFrame({
         "Model": [
@@ -86,41 +169,88 @@ def load_model_comparison():
         "F1 Score": [0.6280, 0.6313, 0.6188, 0.6313, 0.6223, 0.5739, 0.5184],
         "ROC-AUC": [0.8682, 0.8668, 0.8661, 0.8645, 0.8636, 0.8425, 0.7926],
         "PR-AUC": [0.7113, 0.7127, 0.7021, 0.7118, 0.6998, 0.6527, 0.5397],
+        "Predicted Churners": [386, 385, 359, 404, 435, 649, 519]
     })
 
 
+# ============================================================
+# LOAD FEATURE IMPORTANCE
+# ============================================================
+
 @st.cache_data
 def load_feature_importance():
-    path = "outputs/final_feature_importance.csv"
+    possible_paths = [
+        "outputs/final_feature_importance.csv",
+        "final_feature_importance.csv",
+        "outputs/random_forest_feature_importance.csv",
+        "random_forest_feature_importance.csv"
+    ]
 
-    if os.path.exists(path):
-        return pd.read_csv(path)
+    for path in possible_paths:
+        if os.path.exists(path):
+            return pd.read_csv(path)
 
     return pd.DataFrame({
         "Feature": [
-            "Age", "NumOfProducts", "Engagement_Product", "IsActiveMember",
-            "Geography_Germany", "Balance", "Age_Tenure", "Balance_to_Salary",
-            "Gender_Male", "Product_Density", "EstimatedSalary", "CreditScore",
-            "Senior_Customer_Flag", "Zero_Balance_Flag", "High_Balance_Flag",
-            "Tenure", "Geography_Spain", "HasCrCard", "Low_CreditScore_Flag"
+            "Age",
+            "NumOfProducts",
+            "Engagement_Product",
+            "IsActiveMember",
+            "Geography_Germany",
+            "Balance",
+            "Age_Tenure",
+            "Balance_to_Salary",
+            "Gender_Male",
+            "Product_Density",
+            "EstimatedSalary",
+            "CreditScore",
+            "Senior_Customer_Flag",
+            "Zero_Balance_Flag",
+            "High_Balance_Flag",
+            "Tenure",
+            "Geography_Spain",
+            "HasCrCard",
+            "Low_CreditScore_Flag"
         ],
         "Importance": [
-            0.318838, 0.261072, 0.091346, 0.063453,
-            0.048965, 0.042263, 0.036429, 0.027350,
-            0.020053, 0.018609, 0.014804, 0.013665,
-            0.012677, 0.010221, 0.007771,
-            0.007351, 0.002216, 0.002060, 0.000859
+            0.318838,
+            0.261072,
+            0.091346,
+            0.063453,
+            0.048965,
+            0.042263,
+            0.036429,
+            0.027350,
+            0.020053,
+            0.018609,
+            0.014804,
+            0.013665,
+            0.012677,
+            0.010221,
+            0.007771,
+            0.007351,
+            0.002216,
+            0.002060,
+            0.000859
         ]
     })
 
 
-def engineer_features(df):
-    df = df.copy()
+# ============================================================
+# FEATURE ENGINEERING
+# ============================================================
+
+def engineer_features(input_df):
+    df = input_df.copy()
 
     salary_safe = df["EstimatedSalary"].replace(0, np.nan)
 
     df["Balance_to_Salary"] = df["Balance"] / salary_safe
-    df["Balance_to_Salary"] = df["Balance_to_Salary"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    df["Balance_to_Salary"] = (
+        df["Balance_to_Salary"]
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0)
+    )
 
     df["Product_Density"] = df["NumOfProducts"] / (df["Tenure"] + 1)
     df["Engagement_Product"] = df["IsActiveMember"] * df["NumOfProducts"]
@@ -134,7 +264,11 @@ def engineer_features(df):
     return df
 
 
-def assign_risk(probability):
+# ============================================================
+# RISK LOGIC
+# ============================================================
+
+def assign_risk_category(probability):
     if probability < 0.30:
         return "Low Risk"
     elif probability < 0.60:
@@ -145,24 +279,46 @@ def assign_risk(probability):
         return "Very High Risk"
 
 
-def recommended_action(risk):
-    if risk == "Low Risk":
+def retention_action(risk_category):
+    if risk_category == "Low Risk":
         return "Maintain regular engagement and standard service."
-    elif risk == "Medium Risk":
+    elif risk_category == "Medium Risk":
         return "Send personalized engagement message or relevant product recommendation."
-    elif risk == "High Risk":
+    elif risk_category == "High Risk":
         return "Offer retention benefit, relationship-manager call, or product bundle."
     else:
         return "Immediate retention intervention with personalized offer and priority support."
 
 
-def predict_churn(customer_df):
-    customer_featured = engineer_features(customer_df)
-    probability = model.predict_proba(customer_featured)[:, 1][0]
-    risk = assign_risk(probability)
-    action = recommended_action(risk)
+def risk_box(risk_category):
+    if risk_category == "Low Risk":
+        bg_color = "#d8f3dc"
+        text_color = "#1b7f3a"
+    elif risk_category == "Medium Risk":
+        bg_color = "#fff3cd"
+        text_color = "#9a6a00"
+    elif risk_category == "High Risk":
+        bg_color = "#ffe5b4"
+        text_color = "#b45309"
+    else:
+        bg_color = "#f8d7da"
+        text_color = "#b91c1c"
 
-    return probability, risk, action, customer_featured
+    st.markdown(
+        f"""
+        <div style="
+            background-color:{bg_color};
+            color:{text_color};
+            padding:22px;
+            border-radius:15px;
+            text-align:center;
+            font-size:28px;
+            font-weight:800;">
+            {risk_category}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 def create_gauge(probability):
@@ -170,7 +326,7 @@ def create_gauge(probability):
         go.Indicator(
             mode="gauge+number",
             value=probability * 100,
-            number={"suffix": "%"},
+            number={"suffix": "%", "font": {"size": 34}},
             title={"text": "Churn Probability"},
             gauge={
                 "axis": {"range": [0, 100]},
@@ -194,49 +350,27 @@ def create_gauge(probability):
     return fig
 
 
-def risk_box(risk):
-    if risk == "Low Risk":
-        color = "#d8f3dc"
-        text = "#1b7f3a"
-    elif risk == "Medium Risk":
-        color = "#fff3cd"
-        text = "#9a6a00"
-    elif risk == "High Risk":
-        color = "#ffe5b4"
-        text = "#b45309"
-    else:
-        color = "#f8d7da"
-        text = "#b91c1c"
+def predict_customer(customer_df):
+    featured_df = engineer_features(customer_df)
+    probability = model.predict_proba(featured_df)[:, 1][0]
+    risk = assign_risk_category(probability)
+    action = retention_action(risk)
 
-    st.markdown(
-        f"""
-        <div style="
-            background-color:{color};
-            color:{text};
-            padding:20px;
-            border-radius:15px;
-            text-align:center;
-            font-size:26px;
-            font-weight:800;">
-            {risk}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    return probability, risk, action, featured_df
 
 
 # ============================================================
-# Load Files
+# LOAD ALL FILES
 # ============================================================
 
-model, threshold = load_model()
+model, threshold, loaded_model_path = load_model()
 df = load_dataset()
 model_comparison_df = load_model_comparison()
 feature_importance_df = load_feature_importance()
 
 
 # ============================================================
-# Sidebar
+# SIDEBAR
 # ============================================================
 
 st.sidebar.title("🏦 Churn Risk Scoring")
@@ -256,14 +390,17 @@ page = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.metric("Final Model", "Calibrated GB")
+st.sidebar.metric("Final Model", "Gradient Boosting")
 st.sidebar.metric("Threshold", f"{threshold:.2f}")
 st.sidebar.metric("ROC-AUC", "0.8667")
 st.sidebar.metric("Recall", "66.34%")
 
+with st.sidebar.expander("Loaded files"):
+    st.write("Model:", loaded_model_path)
+
 
 # ============================================================
-# Home Page
+# HOME PAGE
 # ============================================================
 
 if page == "Home":
@@ -298,7 +435,7 @@ if page == "Home":
 
     with c1:
         st.subheader("🎯 Risk Calculator")
-        st.write("Predict churn probability for a customer.")
+        st.write("Predict churn probability for an individual customer.")
 
     with c2:
         st.subheader("🔁 What-if Simulator")
@@ -310,11 +447,13 @@ if page == "Home":
 
 
 # ============================================================
-# Risk Calculator Page
+# RISK CALCULATOR PAGE
 # ============================================================
 
 elif page == "Risk Calculator":
     st.title("🎯 Customer Churn Risk Calculator")
+
+    st.write("Enter customer details below to calculate churn risk.")
 
     with st.form("risk_form"):
         col1, col2, col3 = st.columns(3)
@@ -327,7 +466,12 @@ elif page == "Risk Calculator":
         with col2:
             age = st.slider("Age", 18, 92, 40)
             tenure = st.slider("Tenure", 0, 10, 5)
-            balance = st.number_input("Balance", min_value=0.0, value=75000.0, step=1000.0)
+            balance = st.number_input(
+                "Balance",
+                min_value=0.0,
+                value=75000.0,
+                step=1000.0
+            )
 
         with col3:
             num_products = st.selectbox("Number of Products", [1, 2, 3, 4])
@@ -364,7 +508,7 @@ elif page == "Risk Calculator":
             "EstimatedSalary": [estimated_salary]
         })
 
-        probability, risk, action, featured_df = predict_churn(customer_df)
+        probability, risk, action, featured_df = predict_customer(customer_df)
 
         st.markdown("---")
         st.subheader("Prediction Result")
@@ -389,7 +533,7 @@ elif page == "Risk Calculator":
 
 
 # ============================================================
-# What-if Simulator Page
+# WHAT-IF SIMULATOR PAGE
 # ============================================================
 
 elif page == "What-if Simulator":
@@ -414,7 +558,12 @@ elif page == "What-if Simulator":
     with c2:
         base_age = st.slider("Current Age", 18, 92, 40)
         base_tenure = st.slider("Current Tenure", 0, 10, 5)
-        base_balance = st.number_input("Current Balance", min_value=0.0, value=75000.0, step=1000.0)
+        base_balance = st.number_input(
+            "Current Balance",
+            min_value=0.0,
+            value=75000.0,
+            step=1000.0
+        )
 
     with c3:
         base_products = st.selectbox("Current Number of Products", [1, 2, 3, 4])
@@ -428,7 +577,12 @@ elif page == "What-if Simulator":
             [1, 0],
             format_func=lambda x: "Yes" if x == 1 else "No"
         )
-        base_salary = st.number_input("Current Estimated Salary", min_value=1.0, value=100000.0, step=1000.0)
+        base_salary = st.number_input(
+            "Current Estimated Salary",
+            min_value=1.0,
+            value=100000.0,
+            step=1000.0
+        )
 
     st.markdown("---")
     st.markdown("## Modified Scenario")
@@ -436,7 +590,11 @@ elif page == "What-if Simulator":
     s1, s2, s3 = st.columns(3)
 
     with s1:
-        new_products = st.selectbox("Scenario Number of Products", [1, 2, 3, 4], index=base_products - 1)
+        new_products = st.selectbox(
+            "Scenario Number of Products",
+            [1, 2, 3, 4],
+            index=base_products - 1
+        )
 
     with s2:
         new_active = st.selectbox(
@@ -447,7 +605,12 @@ elif page == "What-if Simulator":
         )
 
     with s3:
-        new_balance = st.number_input("Scenario Balance", min_value=0.0, value=float(base_balance), step=1000.0)
+        new_balance = st.number_input(
+            "Scenario Balance",
+            min_value=0.0,
+            value=float(base_balance),
+            step=1000.0
+        )
 
     if st.button("Run Simulation"):
         base_customer = pd.DataFrame({
@@ -468,8 +631,8 @@ elif page == "What-if Simulator":
         scenario_customer["IsActiveMember"] = new_active
         scenario_customer["Balance"] = new_balance
 
-        base_prob, base_risk, _, _ = predict_churn(base_customer)
-        new_prob, new_risk, _, _ = predict_churn(scenario_customer)
+        base_prob, base_risk, _, _ = predict_customer(base_customer)
+        new_prob, new_risk, _, _ = predict_customer(scenario_customer)
 
         change = new_prob - base_prob
 
@@ -513,7 +676,7 @@ elif page == "What-if Simulator":
 
 
 # ============================================================
-# Analytics Page
+# ANALYTICS PAGE
 # ============================================================
 
 elif page == "Analytics":
@@ -537,14 +700,17 @@ elif page == "Analytics":
 
             churn_df = df["Exited"].value_counts().reset_index()
             churn_df.columns = ["Exited", "Count"]
-            churn_df["Status"] = churn_df["Exited"].map({0: "Retained", 1: "Churned"})
+            churn_df["Status"] = churn_df["Exited"].map({
+                0: "Retained",
+                1: "Churned"
+            })
 
             fig = px.pie(
                 churn_df,
                 names="Status",
                 values="Count",
                 hole=0.45,
-                title="Churn Distribution"
+                title="Customer Churn Distribution"
             )
             st.plotly_chart(fig, use_container_width=True)
 
@@ -552,11 +718,11 @@ elif page == "Analytics":
 
             with a1:
                 if "Geography" in df.columns:
-                    geo = df.groupby("Geography")["Exited"].mean().reset_index()
-                    geo["Churn Rate"] = geo["Exited"] * 100
+                    geo_df = df.groupby("Geography")["Exited"].mean().reset_index()
+                    geo_df["Churn Rate"] = geo_df["Exited"] * 100
 
                     fig = px.bar(
-                        geo,
+                        geo_df,
                         x="Geography",
                         y="Churn Rate",
                         text="Churn Rate",
@@ -567,11 +733,11 @@ elif page == "Analytics":
 
             with a2:
                 if "Gender" in df.columns:
-                    gender = df.groupby("Gender")["Exited"].mean().reset_index()
-                    gender["Churn Rate"] = gender["Exited"] * 100
+                    gender_df = df.groupby("Gender")["Exited"].mean().reset_index()
+                    gender_df["Churn Rate"] = gender_df["Exited"] * 100
 
                     fig = px.bar(
-                        gender,
+                        gender_df,
                         x="Gender",
                         y="Churn Rate",
                         text="Churn Rate",
@@ -584,12 +750,15 @@ elif page == "Analytics":
 
             with b1:
                 if "IsActiveMember" in df.columns:
-                    active = df.groupby("IsActiveMember")["Exited"].mean().reset_index()
-                    active["Status"] = active["IsActiveMember"].map({0: "Inactive", 1: "Active"})
-                    active["Churn Rate"] = active["Exited"] * 100
+                    active_df = df.groupby("IsActiveMember")["Exited"].mean().reset_index()
+                    active_df["Status"] = active_df["IsActiveMember"].map({
+                        0: "Inactive",
+                        1: "Active"
+                    })
+                    active_df["Churn Rate"] = active_df["Exited"] * 100
 
                     fig = px.bar(
-                        active,
+                        active_df,
                         x="Status",
                         y="Churn Rate",
                         text="Churn Rate",
@@ -600,11 +769,11 @@ elif page == "Analytics":
 
             with b2:
                 if "NumOfProducts" in df.columns:
-                    product = df.groupby("NumOfProducts")["Exited"].mean().reset_index()
-                    product["Churn Rate"] = product["Exited"] * 100
+                    product_df = df.groupby("NumOfProducts")["Exited"].mean().reset_index()
+                    product_df["Churn Rate"] = product_df["Exited"] * 100
 
                     fig = px.bar(
-                        product,
+                        product_df,
                         x="NumOfProducts",
                         y="Churn Rate",
                         text="Churn Rate",
@@ -615,7 +784,7 @@ elif page == "Analytics":
 
 
 # ============================================================
-# Model Performance Page
+# MODEL PERFORMANCE PAGE
 # ============================================================
 
 elif page == "Model Performance":
@@ -631,10 +800,20 @@ elif page == "Model Performance":
     st.subheader("Final Test Model Comparison")
     st.dataframe(model_comparison_df, use_container_width=True)
 
-    metric = st.selectbox(
-        "Select Metric",
-        ["ROC-AUC", "PR-AUC", "F1 Score", "Recall", "Precision", "Accuracy"]
-    )
+    numeric_metrics = [
+        "ROC-AUC",
+        "PR-AUC",
+        "F1 Score",
+        "Recall",
+        "Precision",
+        "Accuracy"
+    ]
+
+    available_metrics = [
+        col for col in numeric_metrics if col in model_comparison_df.columns
+    ]
+
+    metric = st.selectbox("Select Metric", available_metrics)
 
     sorted_df = model_comparison_df.sort_values(metric, ascending=False)
 
@@ -654,7 +833,7 @@ elif page == "Model Performance":
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.metric("Model", "Calibrated GB")
+    c1.metric("Model", "Gradient Boosting")
     c2.metric("Accuracy", "0.8400")
     c3.metric("Recall", "0.6634")
     c4.metric("ROC-AUC", "0.8667")
@@ -668,7 +847,7 @@ elif page == "Model Performance":
 
 
 # ============================================================
-# Feature Importance Page
+# FEATURE IMPORTANCE PAGE
 # ============================================================
 
 elif page == "Feature Importance":
@@ -682,13 +861,25 @@ elif page == "Feature Importance":
 
     st.dataframe(feature_importance_df, use_container_width=True)
 
-    top_n = st.slider("Top features to display", 5, min(20, len(feature_importance_df)), 10)
+    importance_col = "Importance"
 
-    plot_df = feature_importance_df.head(top_n).sort_values("Importance")
+    if importance_col not in feature_importance_df.columns:
+        numeric_cols = feature_importance_df.select_dtypes(include=["float64", "int64"]).columns.tolist()
+        if len(numeric_cols) > 0:
+            importance_col = numeric_cols[0]
+
+    top_n = st.slider(
+        "Top features to display",
+        5,
+        min(20, len(feature_importance_df)),
+        min(10, len(feature_importance_df))
+    )
+
+    plot_df = feature_importance_df.head(top_n).sort_values(importance_col)
 
     fig = px.bar(
         plot_df,
-        x="Importance",
+        x=importance_col,
         y="Feature",
         orientation="h",
         title=f"Top {top_n} Churn Drivers"
@@ -706,7 +897,7 @@ elif page == "Feature Importance":
 
 
 # ============================================================
-# About Project Page
+# ABOUT PROJECT PAGE
 # ============================================================
 
 elif page == "About Project":
